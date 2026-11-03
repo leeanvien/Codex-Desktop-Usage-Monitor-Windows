@@ -25,6 +25,25 @@ function Get-RecoveryFunction([Management.Automation.Language.ScriptBlockAst]$As
 
 function Quote-RecoveryLiteral([string]$Value) { return "'" + $Value.Replace("'", "''") + "'" }
 
+function Read-RecoveryRequestCount([string]$Path) {
+  $stream = $null
+  $reader = $null
+  try {
+    # The fixture server rewrites this counter while probes are in progress.
+    # Sharing reads AND writes avoids a Windows sharing violation against an
+    # active writer. Empty/partial writes are retried by the existing poll loop.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $reader = [IO.StreamReader]::new($stream)
+    $count = 0
+    [void][int]::TryParse($reader.ReadToEnd(), [ref]$count)
+    return $count
+  } catch [IO.IOException] { return 0 }
+  finally {
+    if ($reader) { $reader.Dispose() }
+    if ($stream) { $stream.Dispose() }
+  }
+}
+
 function Wait-RecoveryFile([string]$Path, [Diagnostics.Process]$Worker, [int]$TimeoutMilliseconds = 10000) {
   $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
   do {
@@ -57,6 +76,16 @@ $shell = (Get-Process -Id $PID).Path
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 
 try {
+  # Deterministic coverage for a reader observing the fixture's open writer.
+  $sharingFile = Join-Path $testRoot 'counter-sharing.txt'
+  [IO.File]::WriteAllText($sharingFile, '12')
+  $writer = [IO.File]::Open($sharingFile, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+  try {
+    Assert-Recovery ((Read-RecoveryRequestCount $sharingFile) -eq 12) 'Polling must read the counter while its writer is still open.'
+  } finally { $writer.Dispose() }
+  [IO.File]::WriteAllText($sharingFile, '')
+  Assert-Recovery ((Read-RecoveryRequestCount $sharingFile) -eq 0) 'An incomplete counter must wait for the next poll.'
+
   # Only a test-owned loopback HTTP server is launched. Its lifetime also acts as
   # the desktop identity fixture; no real Codex, credentials, or model is used.
   $serverSource = @'
@@ -134,8 +163,7 @@ function Write-CodexUsageReadinessLog { }
       # pending. No fixed startup deadline may turn this into an error/restart.
       $probeDeadline = [DateTime]::UtcNow.AddSeconds(10)
       do {
-        $count = 0
-        if (Test-Path -LiteralPath $requestFile) { [void][int]::TryParse([IO.File]::ReadAllText($requestFile), [ref]$count) }
+        $count = Read-RecoveryRequestCount $requestFile
         if ($count -ge 8) { break }
         $helper.Refresh()
         Assert-Recovery (-not $helper.HasExited) 'The helper must keep waiting while the same desktop process is alive.'
