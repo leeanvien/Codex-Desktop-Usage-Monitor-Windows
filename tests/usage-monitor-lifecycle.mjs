@@ -1,0 +1,1356 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { JSDOM } from "jsdom";
+import { normalizeUsageView, toOfficialUsageSource } from "../scripts/usage-client.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(here, "..");
+const version = (await fs.readFile(path.join(root, "VERSION"), "utf8")).trim();
+const payload = (await Promise.all([
+  "usage-constants.js",
+  "usage-i18n.js",
+  "usage-placement.js",
+  "usage-history.js",
+  "usage-inject.js",
+].map((name) => fs.readFile(path.join(root, "assets", name), "utf8")))).join("\n");
+
+const composerMarkup = (withApproval = true) => `
+  <div class="composer-surface-chrome" style="position: relative">
+    <div contenteditable="true"></div>
+    <button aria-label="添加文件等内容"></button>
+    ${withApproval ? '<button style="color: rgb(70, 80, 90); font-size: 14px">替我审批</button>' : ""}
+    <button>5.6 Sol 极高</button>
+    <button aria-label="听写"></button>
+    <button aria-label="发送"></button>
+  </div>`;
+
+const updatedComposerMarkup = () => `
+  <div class="_ComposerLayoutRoot_2av5p_3" style="position: relative">
+    <div class="_ComposerLayoutBody_2av5p_179">
+      <div class="contents">
+        <div class="_ComposerLayoutFooter_2av5p_335">
+          <div contenteditable="true"></div>
+          <button aria-label="添加文件等内容"></button>
+          <button aria-label="权限"></button>
+          <button>5.6 Sol 极高</button>
+          <button aria-label="听写"></button>
+          <button aria-label="发送"></button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+const dom = new JSDOM(`<!doctype html>
+<html>
+  <head></head>
+  <body>
+    <div id="composer-overflow-root" style="overflow: auto; width: 700px">
+      <div id="composer-wrapper" style="position: relative">${composerMarkup()}</div>
+    </div>
+  </body>
+</html>`, {
+  pretendToBeVisual: true,
+  runScripts: "outside-only",
+  url: "https://codex.local/",
+});
+
+const { window } = dom;
+window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+  const value = (() => {
+    if (this.id === "composer-wrapper" || this.matches('.composer-surface-chrome, [class*="ComposerLayoutRoot"]')) return { x: 100, y: 100, width: 700, height: 100 };
+    if (this.id === "codex-usage-monitor") return { x: 234, y: 164, width: 380, height: 28 };
+    if (this.matches('[contenteditable="true"]')) return { x: 112, y: 112, width: 676, height: 44 };
+    const text = `${this.getAttribute?.("aria-label") || ""} ${this.textContent || ""}`;
+    if (/添加/.test(text)) return { x: 108, y: 164, width: 28, height: 28 };
+    if (/(?:替我审批|请求批准|完全访问(?:权限)?|自定义(?:\s*\(config\.toml\))?)/.test(text)) return { x: 141, y: 164, width: 85, height: 28 };
+    if (/权限/.test(text)) return { x: 141, y: 164, width: 28, height: 28 };
+    if (/5\.6/.test(text)) return { x: 622, y: 164, width: 105, height: 28 };
+    if (/听写/.test(text)) return { x: 728, y: 164, width: 28, height: 28 };
+    if (/(?:发送|停止)/.test(text)) return { x: 764, y: 164, width: 28, height: 28 };
+    return { x: 0, y: 0, width: 0, height: 0 };
+  })();
+  return { ...value, right: value.x + value.width, bottom: value.y + value.height };
+};
+
+const now = Date.now();
+const currentThreadId = "019fb3b1-2638-7bb0-9a90-ec83b5bca0f2";
+const otherThreadId = "019fb3b1-2638-7bb0-9a90-ec83b5bca0f4";
+const primaryResetsAt = new Date(2026, 6, 24, 12, 0).getTime() / 1000;
+const secondaryResetsAt = new Date(2026, 6, 30, 7, 0).getTime() / 1000;
+const usage = {
+  schemaVersion: 2,
+  currentThreadId,
+  nextRefreshAt: now + 60000,
+  autoResume: { enabled: false, status: "idle", resetAt: null },
+  todayTokens: 128000,
+  lifetimeTokens: 12000000,
+  sources: {
+    session: {
+      id: "session", label: "本会话", accountType: "session", status: "ready", nextRefreshAt: now + 60000,
+      metrics: [
+        { id: "executionTime", label: "执行总耗时", display: "耗时 11分31秒", value: "11分31秒", durationMs: 691323, running: false, estimated: false, incomplete: false, sampledAt: new Date(now).toISOString(), defaultVisible: false },
+        { id: "autoResume", label: "额度恢复续跑", display: "续跑 --", value: "--", defaultVisible: false },
+        { id: "currentTaskTokens", label: "当前会话累计 Token", display: "会话 3822万", value: "3822万", defaultVisible: true },
+        { id: "lastTurnTokens", label: "上次回答消耗 Token", display: "上次回答 8万", value: "8万", defaultVisible: false },
+        { id: "cacheHitRate", label: "缓存命中率", display: "缓存 95.3%", value: "95.3%", defaultVisible: false },
+        { id: "contextCompactions", label: "自动压缩上下文次数", display: "压缩 3", value: "3", defaultVisible: false },
+      ],
+    },
+    official: {
+      id: "official", label: "官方订阅", accountType: "subscription", status: "ready", nextRefreshAt: now + 60000,
+      metrics: [
+        { id: "primaryRemaining", label: "5小时剩余", display: "5小时 75%", value: "75%", resetsAt: primaryResetsAt, defaultVisible: true },
+        { id: "secondaryRemaining", label: "7天剩余", display: "7天 44%", value: "44%", resetsAt: secondaryResetsAt, defaultVisible: false },
+        { id: "primaryReset", label: "5小时重置", display: "重置 07-24 12:00", value: "07-24 12:00", defaultVisible: false },
+        { id: "todayTokens", label: "今日 token", display: "今日 128k", value: "128,000", defaultVisible: true },
+        { id: "last7DaysTokens", label: "近7天 Token", display: "近7天 240万", value: "240万", defaultVisible: false },
+        { id: "lifetimeTokens", label: "累计 token", display: "累计 12m", value: "12,000,000", defaultVisible: false },
+      ],
+    },
+    "api-account": {
+      id: "api-account", label: "API 账户", accountType: "api-account", status: "loading", nextRefreshAt: now + 60000,
+      metrics: [
+        { id: "balance", label: "账户余额", value: "¥20", display: "余额 ¥20", defaultVisible: true },
+        { id: "usedQuota", label: "累计已用额度", value: "¥8", display: "已用 ¥8" },
+        { id: "todayTokens", label: "今日 Token", value: "4万", display: "今日 4万" },
+        { id: "totalTokens", label: "累计 Token", value: "36万", display: "累计 36万" },
+        { id: "lastPromptTokens", label: "上次输入 Token", value: "12,500", display: "输入 1万" },
+        { id: "lastCompletionTokens", label: "上次输出 Token", value: "800", display: "输出 800" },
+        { id: "lastQuota", label: "上次消耗额度", value: "¥0.12", display: "消耗 ¥0.12" },
+        { id: "lastModel", label: "上次响应模型名称", value: "gpt-5.6-sol", display: "模型 gpt-5.6-sol" },
+        { id: "lastRequestAt", label: "上次请求时间", value: "2026-07-24 09:30", display: "请求 2026-07-24 09:30" },
+        { id: "lastLatency", label: "上次响应耗时", value: "842ms", display: "耗时 842ms" },
+      ],
+    },
+    acme: {
+      id: "acme", label: "Acme API", accountType: "api-key", status: "error", error: "request failed", nextRefreshAt: now + 60000,
+      metrics: [
+        { id: "usedAmount", label: "已用额度", value: "¥5", display: "已用 ¥5", defaultVisible: true },
+        { id: "quotaLimit", label: "限额", value: "不限", display: "限额 不限", defaultVisible: true },
+        { id: "expiresAt", label: "到期时间", value: "永久", display: "到期 永久" },
+      ],
+    },
+    "reset-forecast": {
+      id: "reset-forecast", label: "重置概率预测（仅供参考）", accountType: "forecast", status: "ready", nextRefreshAt: now + 300000,
+      resetMethod: "banked",
+      latestActivity: {
+        text: "Codex 使用额度已面向所有付费套餐重置。",
+        createdAt: now - 3600000,
+        sourceUrl: "https://x.com/thsottiaux/status/2094588317245509959",
+      },
+      metrics: [
+        { id: "probability12h", label: "12小时内", value: "33.5%", display: "12h 33.5%" },
+        { id: "probability24h", label: "24小时内", value: "55.8%", display: "24h 55.8%" },
+        { id: "probability48h", label: "48小时内", value: "72.0%", display: "48h 72.0%" },
+        { id: "probability72h", label: "72小时内", value: "85.2%", display: "72h 85.2%" },
+      ],
+    },
+  },
+};
+
+window.localStorage.setItem("codex-usage-monitor-settings-v1", JSON.stringify({
+  metrics: {
+    official: ["primaryRemaining", "currentTaskTokens"],
+    "api-account": ["balance"],
+    acme: ["usedAmount", "quotaLimit"],
+    "quota-token": ["wholeEstimateTokens"],
+  },
+  minimalMode: false,
+  countdownVisualization: false,
+  autoResume: false,
+  unifiedMetricsVersion: 1,
+  showQuotaToken: true,
+  metricOrder: ["quota-token:wholeEstimateTokens"],
+}));
+window.__CODEX_USAGE_MONITOR_CONFIGURATION__ = {
+  account: { configured: true, baseUrl: "https://www.cctq.ai", userId: "10530", baselineConfigured: true, initialTokens: "123456" },
+  provider: {
+    configured: true, schemaVersion: 1, id: "cctq", label: "CCTQ API", baseUrl: "https://www.cctq.ai",
+    requests: { usagePath: "/api/usage/token/", statusPath: "/api/status" },
+    auth: { header: "Authorization", scheme: "Bearer" },
+    response: {
+      usageRoot: "data", statusRoot: "data", used: "total_used", limit: "total_granted",
+      unlimited: "unlimited_quota", expiresAt: "expires_at", quotaPerUnit: "quota_per_unit",
+      currency: "quota_display_type", defaultQuotaPerUnit: 500000, defaultCurrency: "CNY",
+    },
+  },
+};
+const configurationPayloads = [];
+window.__codexUsageMonitorConfigureSource = (value) => configurationPayloads.push(JSON.parse(value));
+
+try {
+  assert.match(payload, /const observerTarget = document\.documentElement \|\| document;/);
+  const result = window.eval(payload);
+  assert.equal(result.installed, true);
+  assert.equal(window.localStorage.getItem("codex-usage-monitor-settings-v1"), null);
+  const migratedSettings = JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2"));
+  assert.equal(migratedSettings.showQuotaToken, undefined);
+  assert.equal(migratedSettings.metrics["quota-token"], undefined);
+  assert.equal(migratedSettings.metricOrder.some(key => key.startsWith("quota-token:")), false);
+  let host = window.document.getElementById("codex-usage-monitor");
+  assert.ok(host?.shadowRoot);
+  assert.equal(host.parentElement, window.document.body);
+  assert.equal(window.document.getElementById("composer-overflow-root").contains(host), false);
+  assert.equal(host.dataset.anchor, "approval");
+  assert.equal(host.style.getPropertyValue("--usage-color"), "rgb(70, 80, 90)");
+  assert.equal(host.style.getPropertyValue("--usage-font-size"), "14px");
+  assert.equal(host.style.getPropertyValue("--usage-left"), "234px");
+  assert.equal(host.style.getPropertyValue("--usage-top"), "164px");
+  const initialMonitorLeft = host.style.getPropertyValue("--usage-left");
+  const quickComposer = window.document.createElement("div");
+  quickComposer.className = "composer-surface-chrome quick-chat-composer";
+  quickComposer.innerHTML = '<div contenteditable="true"></div><button>快速聊天</button><button>发送</button>';
+  window.document.getElementById("composer-wrapper").parentElement.insertBefore(quickComposer, window.document.getElementById("composer-wrapper"));
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(host.style.getPropertyValue("--usage-left"), initialMonitorLeft);
+  window.document.getElementById("composer-wrapper").innerHTML = composerMarkup();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(host.dataset.anchor, "approval");
+  assert.equal(host.style.getPropertyValue("--usage-left"), initialMonitorLeft);
+  quickComposer.remove();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, true);
+  const approvalButton = [...window.document.querySelectorAll("button")]
+    .find((button) => button.textContent.includes("替我审批"));
+  assert.ok(approvalButton);
+  window.dispatchEvent(new window.Event("blur"));
+  assert.equal(host.hidden, false);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, true);
+  window.dispatchEvent(new window.Event("focus"));
+  assert.equal(host.hidden, false);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, true);
+  for (const label of ["请求批准", "替我审批", "完全访问权限", "完全访问", "自定义 (config.toml)", "自定义"]) {
+    approvalButton.textContent = label;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    host = window.document.getElementById("codex-usage-monitor");
+    assert.ok(host?.shadowRoot);
+    assert.equal(host.hidden, false);
+    assert.equal(host.dataset.anchor, "approval");
+    assert.equal(host.style.getPropertyValue("--usage-left"), initialMonitorLeft);
+  }
+  assert.equal(host.shadowRoot.querySelector(".usage-dot"), null);
+  assert.doesNotMatch(host.shadowRoot.querySelector("style").textContent, /\.usage-source-switch/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /ready[^}]+#22c55e/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /loading[^}]+#facc15/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /stale[^}]+#fb3f4f/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /usage-status[^}]+#a1a1aa/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /usage-summary-item \+ \.usage-summary-item::before\s*\{[\s\S]*?top:\s*calc\(50% \+ 1px\);[\s\S]*?background:\s*currentColor;[\s\S]*?translateY\(-50%\)/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /height:\s*14px;[\s\S]*?opacity:\s*\.40;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-popover\s*\{[\s\S]*?background:\s*Canvas;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-popover\s*\{[\s\S]*?width:\s*max-content;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /:host\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?top:\s*var\(--usage-top/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-column\s*\{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?width:\s*100%;/);
+  assert.doesNotMatch(host.shadowRoot.querySelector("style").textContent, /usage-column \+ \.usage-column\s*\{[^}]*border-left/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-columns\s*\{[\s\S]*?grid-template-columns:\s*var\(--usage-column-widths, repeat\(var\(--usage-column-count, 4\), minmax\(230px, 1fr\)\)\);/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-popover\s*\{[\s\S]*?overflow-x:\s*hidden;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-detail-label\s*\{[\s\S]*?color:\s*inherit;[\s\S]*?font-weight:\s*650;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /usage-detail-select input\s*\{[\s\S]*?appearance:\s*none;[\s\S]*?width:\s*13px;[\s\S]*?height:\s*13px;/);
+  assert.doesNotMatch(host.shadowRoot.querySelector("style").textContent, /usage-popover-footer/);
+  assert.doesNotMatch(host.shadowRoot.querySelector("style").textContent, /:host\(\[data-density="(?:dense|packed)"\]\)\s*\{[^}]*font-size/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-summary\s*\{[\s\S]*?font-size:\s*var\(--usage-font-size,\s*11px\);/);
+  assert.doesNotMatch(host.shadowRoot.querySelector("style").textContent, /:host\(\[data-density="(?:dense|packed)"\]\) \.usage-summary\s*\{[^}]*font-size/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-summary-items\s*\{[^}]*height:\s*100%;[^}]*line-height:\s*1;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-summary-item\s*\{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*height:\s*100%;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /data-density="packed"[^}]+\.usage-summary-item:nth-child\(2\)\s*\{\s*padding-left:\s*0;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /data-density="packed"[^}]+\.usage-summary-item:nth-child\(2\)::before\s*\{\s*display:\s*none;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-mode-switches\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[\s\S]*?grid-auto-flow:\s*row;[\s\S]*?width:\s*100%;/);
+  assert.doesNotMatch(host.shadowRoot.querySelector("style").textContent, /\.usage-mode-toggle-api/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-mode-toggle\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 24px;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-inline-toggle\s*\{[^}]*width:\s*24px;[^}]*height:\s*14px;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-summary-toggle\s*\{\s*flex:\s*0 0 24px;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-mode-toggle input:checked \+ \.usage-toggle-track,\s*\.usage-inline-toggle input:checked \+ \.usage-toggle-track\s*\{[^}]*border-color:\s*#86efac;[^}]*background:\s*#86efac;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-mode-toggle input:checked \+ \.usage-toggle-track::after,\s*\.usage-inline-toggle input:checked \+ \.usage-toggle-track::after\s*\{[^}]*background:\s*#166534;[^}]*transform:\s*translateX\(10px\);/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-settings-trigger\s*\{[^}]*border:\s*1px solid currentColor;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /@media \(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.usage-toggle-track::after\s*\{\s*transition:\s*none;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-refresh-ring\s*\{[\s\S]*?top:\s*0;[\s\S]*?width:\s*13px;[\s\S]*?border:\s*1\.5px solid currentColor;[\s\S]*?background:\s*transparent;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-refresh-ring::before\s*\{[\s\S]*?top:\s*-3px;[\s\S]*?width:\s*3px;[\s\S]*?height:\s*3px;[\s\S]*?background:\s*currentColor/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-refresh-ring::after\s*\{[\s\S]*?width:\s*1\.5px;[\s\S]*?height:\s*calc\(50% \+ \.5px\);[\s\S]*?background:\s*#22c55e;[\s\S]*?transform:\s*rotate\(var\(--usage-refresh-progress\)\);[\s\S]*?transform-origin:\s*50% 100%;/);
+
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
+  assert.notEqual(host.dataset.density, "normal");
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-summary-item")].map((item) => item.textContent), ["会话3822万", "5时75%", "余额¥20", "已用¥5", "限额不限"]);
+
+  host.shadowRoot.querySelector(".usage-summary").click();
+  assert.equal(host.shadowRoot.querySelector(".usage-popover").hidden, false);
+  const columns = [...host.shadowRoot.querySelectorAll(".usage-column")];
+  assert.equal(columns.length, 5);
+  assert.equal(host.dataset.columnCount, "5");
+  assert.equal(host.style.getPropertyValue("--usage-column-widths"), "230px 230px 160px 230px 170px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-width"), "1060px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-shift"), "-298px");
+  assert.deepEqual(columns.map((column) => column.querySelector(".usage-column-heading").textContent), ["本会话", "官方订阅", "重置概率预测（仅供参考）", "API 账户", "API Key"]);
+  assert.deepEqual(columns.map((column) => column.dataset.status), ["ready", "ready", "ready", "loading", "error"]);
+  assert.deepEqual(columns.map((column) => column.querySelectorAll(".usage-detail-row").length), [7, 6, 4, 8, 4]);
+  const tiboActivity = columns[2].querySelector(".usage-tibo-activity");
+  assert.equal(tiboActivity.querySelector(".usage-tibo-activity-label").textContent, "Tibo 最新动态");
+  assert.equal(host.shadowRoot.querySelector(".usage-reset-method").textContent, "预告方式：发放重置卡");
+  assert.equal(tiboActivity.querySelector(".usage-tibo-activity-text").textContent, "Codex 使用额度已面向所有付费套餐重置。");
+  assert.equal(tiboActivity.querySelector(".usage-tibo-activity-link").textContent, "打开 X");
+  assert.equal(tiboActivity.querySelector(".usage-tibo-activity-link").href, "https://x.com/thsottiaux/status/2094588317245509959");
+  assert.match(tiboActivity.querySelector(".usage-tibo-activity-time").textContent, /^发布于 \d{2}-\d{2} \d{2}:\d{2}$/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-tibo-activity-text\s*\{[\s\S]*?-webkit-line-clamp:\s*3;/);
+  assert.deepEqual([...columns[0].querySelectorAll('input[data-source="session"][data-metric]')].map((input) => input.dataset.metric), ["currentTaskTokens", "lastTurnTokens", "cacheHitRate", "lastTurnCacheHitRate", "contextCompactions", "executionTime", "autoResume"]);
+  assert.equal(columns[0].querySelector('[data-metric="executionTime"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "执行总耗时");
+  assert.equal(columns[0].querySelector('[data-metric="executionTime"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "11分31秒");
+  assert.equal(host.shadowRoot.querySelector('[data-metric="currentStatus"]'), null);
+  assert.equal(columns[0].querySelector('[data-metric="currentTaskTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "当前会话累计 Token");
+  assert.equal(columns[0].querySelector('[data-metric="currentTaskTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "3822万");
+  assert.equal(columns[0].querySelector('[data-metric="lastTurnTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "上次回答消耗 Token");
+  assert.equal(columns[0].querySelector('[data-metric="lastTurnTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "8万");
+  assert.equal(columns[0].querySelector('[data-metric="cacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "总缓存命中率");
+  assert.equal(columns[0].querySelector('[data-metric="cacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "95.3%");
+  assert.equal(columns[0].querySelector('[data-metric="lastTurnCacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "上次回答缓存命中率");
+  const previousVersionUsage = structuredClone(usage);
+  previousVersionUsage.sources["quota-token"] = {
+    id: "quota-token", accountType: "quota-token", status: "ready",
+    metrics: [{ id: "wholeEstimateTokens", label: "推算 100% 周额度 Token", value: "≈4000万" }],
+  };
+  previousVersionUsage.sources.session.metrics.push({ id: "lastTurnCacheHitRate", label: "上次回答缓存命中率", value: "97.24%" });
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(previousVersionUsage), true);
+  assert.equal(host.shadowRoot.querySelector('.usage-column[data-source="quota-token"]'), null);
+  assert.equal(host.shadowRoot.querySelector('[data-metric="wholeEstimateTokens"]'), null);
+  assert.equal(host.shadowRoot.querySelector('[data-metric="lastTurnCacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "97.24%");
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
+
+  assert.equal(columns[0].querySelector('[data-metric="contextCompactions"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "自动压缩上下文次数");
+  assert.equal(columns[0].querySelector('[data-metric="contextCompactions"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "3");
+  assert.equal(columns[1].querySelector('[data-metric="primaryRemaining"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "5小时剩余");
+  assert.equal(columns[1].querySelector('[data-metric="secondaryRemaining"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "7天剩余");
+  assert.equal(columns[1].querySelector('[data-metric="primaryRemaining"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "07-24 12:00重置 · 75%");
+  assert.equal(columns[1].querySelector('[data-metric="secondaryRemaining"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "07-30 07:00重置 · 44%");
+  assert.equal(columns[1].querySelector('[data-metric="todayTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "13万");
+  assert.equal(columns[1].querySelector('[data-metric="last7DaysTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "240万");
+  assert.equal(columns[1].querySelector('[data-metric="lifetimeTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "1200万");
+  assert.equal(columns[1].querySelector('[data-metric="requestStatus"]'), null);
+  const usageWithoutTaskMetrics = structuredClone(usage);
+  usageWithoutTaskMetrics.sources.session.status = "unavailable";
+  usageWithoutTaskMetrics.sources.session.metrics = [];
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usageWithoutTaskMetrics), true);
+  const unavailableSessionColumn = host.shadowRoot.querySelector('.usage-column[data-status="unavailable"]');
+  assert.ok(unavailableSessionColumn);
+  assert.equal(unavailableSessionColumn.querySelector(".usage-status").getAttribute("aria-label"), "暂无数据");
+  assert.deepEqual([...unavailableSessionColumn.querySelectorAll(".usage-detail-value")].map((item) => item.textContent), ["--", "--", "--", "--", "--", "--"]);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
+  assert.deepEqual(columns.map((column) => column.querySelector(".usage-status").getAttribute("aria-label")), ["正常", "正常", "正常", "请求中", "请求失败"]);
+  const limitedUsage = structuredClone(usage);
+  limitedUsage.sources.acme.status = "rate-limited";
+  limitedUsage.sources.acme.error = "Acme API 请求受限（HTTP 429），稍后自动重试";
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(limitedUsage), true);
+  assert.equal(host.shadowRoot.querySelector('.usage-column[data-status="rate-limited"] .usage-status').getAttribute("aria-label"), "请求受限");
+  assert.equal(host.shadowRoot.querySelector('[data-source="acme"][data-metric="requestStatus"]')?.closest(".usage-detail-row")?.querySelector(".usage-detail-value")?.textContent, "请求受限");
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
+  assert.equal(host.shadowRoot.querySelectorAll('input[data-metric]:checked').length, 5);
+  assert.deepEqual([...columns[1].querySelectorAll(".usage-column-brand > *")].map((item) => item.textContent), [`Codex Usage Monitor for Windows v${version}`]);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-column-brand\s*\{[\s\S]*?align-self:\s*flex-end;[\s\S]*?width:\s*fit-content;[\s\S]*?margin:\s*0 8px 0 0;[\s\S]*?font-weight:\s*450;[\s\S]*?opacity:\s*\.55;/);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-brand-product\s*\{[^}]*font-size:\s*12px;/);
+  assert.equal(columns[0].querySelector(".usage-column-meta"), null);
+  assert.equal(columns[1].querySelector(".usage-column-meta span:first-of-type").textContent, "最多显示 8 项");
+  assert.equal(columns[2].querySelector(".usage-column-meta"), null);
+  assert.match(host.shadowRoot.querySelector("style").textContent, /\.usage-column-meta\s*\{[\s\S]*?justify-content:\s*flex-end;/);
+  assert.match(host.shadowRoot.querySelector(".usage-refresh-countdown").textContent, /^刷新 \d+秒后$/);
+  assert.equal(host.shadowRoot.querySelector(".usage-mode-switches").hidden, true);
+  assert.equal(host.shadowRoot.querySelector("[data-toggle-settings]").textContent, "设置");
+  host.shadowRoot.querySelector("[data-toggle-settings]").click();
+  assert.equal(host.shadowRoot.querySelector(".usage-mode-switches").hidden, false);
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-mode-toggle")].map((item) => item.textContent), ["极简模式", "倒计时可视化", "30 秒刷新", "English UI", "自动更新", "API 栏", "重置概率预测栏"]);
+  assert.equal(host.shadowRoot.querySelectorAll('.usage-mode-toggle input[type="checkbox"]').length, 7);
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-mode-switches > .usage-mode-toggle").length, 7);
+  assert.equal(host.shadowRoot.querySelector(".usage-mode-toggle-api"), null);
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="autoResume"]').checked, false);
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="autoResume"]').title, "自动续跑已启用");
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="autoResume"]').closest(".usage-column").querySelector(".usage-column-heading").textContent, "本会话");
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').value, "继续");
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').closest(".usage-auto-resume-field").querySelector(".usage-auto-resume-label").textContent, "续跑发送内容");
+  const dailySection = () => host.shadowRoot.querySelector(".usage-daily-keep-alive");
+  const dailyToggle = () => dailySection().querySelector('[data-setting="dailyKeepAlive"]');
+  const dailyTime = () => dailySection().querySelector('[data-setting-text="dailyKeepAliveStart"]');
+  const dailyModel = () => dailySection().querySelector('[data-setting-select="dailyKeepAliveModel"]');
+  const dailyNodes = () => [...dailySection().querySelectorAll(".usage-daily-keep-alive-nodes li")].map((node) => node.textContent);
+  assert.equal(dailySection().closest(".usage-column").dataset.source, "session");
+  assert.equal(dailySection().previousElementSibling.classList.contains("usage-shared-resume"), true, "daily keep-alive follows the existing resume controls");
+  assert.equal(dailyToggle().checked, false, "scheduled sends are opt-in");
+  assert.equal(dailyTime().type, "time");
+  assert.equal(dailyTime().value, "07:00");
+  assert.deepEqual(dailyNodes(), ["07:00", "12:00", "17:00", "22:00"]);
+  assert.equal(dailySection().querySelector(".usage-daily-keep-alive-note").textContent,
+    "复用专用对话保活，已有窗口时跳过。请保持电脑唤醒、监视器运行；刷新以服务端为准。");
+  assert.equal(dailyModel().value, "gpt-6-luna");
+  assert.equal(dailyModel().getAttribute("aria-label"), "保活模型（low）");
+  assert.deepEqual([...dailyModel().options].map(option => [option.value, option.textContent]),
+    [["gpt-6-luna", "gpt-6-luna · 暂不可用"]], "no account model list is presented as available before discovery");
+  dailyToggle().click();
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.getSettings().dailyKeepAlive, true);
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).dailyKeepAlive, true);
+  assert.equal(host.shadowRoot.querySelector('[data-setting="autoResume"]').checked, false, "keep-alive does not enable resume for the current thread");
+  dailyTime().value = "23:48";
+  dailyTime().dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.deepEqual(dailyNodes(), ["23:48", "次日 04:48", "次日 09:48", "次日 14:48"]);
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).dailyKeepAliveStart, "23:48");
+  const unsafeModelLabel = '<img src=x onerror="alert(1)">';
+  const modelUsage = { ...usage, dailyKeepAlive: { status: "waiting", models: [
+    { id: "gpt-6-luna", label: "Luna" }, { id: "gpt-6.1-sol", label: "Sol" },
+    { id: "custom_model:v2", label: unsafeModelLabel }, { id: "invalid/model", label: "Invalid" },
+    { id: "gpt-6-luna\n", label: "Invalid newline" },
+  ] } };
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(modelUsage);
+  assert.deepEqual([...dailyModel().options].map(option => option.value), ["gpt-6-luna", "gpt-6.1-sol", "custom_model:v2"],
+    "the selector reflects dynamically discovered valid model IDs");
+  assert.equal(dailyModel().options[2].textContent, unsafeModelLabel, "model labels remain literal text");
+  assert.equal(dailyModel().querySelector("img"), null, "an untrusted model label never becomes markup");
+  dailyModel().value = "gpt-6.1-sol";
+  dailyModel().dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.getSettings().dailyKeepAliveModel, "gpt-6.1-sol");
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).dailyKeepAliveModel, "gpt-6.1-sol");
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...modelUsage, currentThreadId: otherThreadId });
+  assert.equal(dailyModel().value, "gpt-6.1-sol", "switching development threads preserves the global keep-alive model");
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...modelUsage, dailyKeepAlive: { status: "waiting", models: [{ id: "gpt-6-luna", label: "Luna" }] } });
+  assert.equal(dailyModel().value, "gpt-6.1-sol", "discovery changes must not silently replace a user's selected model");
+  assert.equal(dailyModel().selectedOptions[0].textContent, "gpt-6.1-sol · 暂不可用");
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...usage, currentThreadId: null });
+  assert.equal(dailyToggle().checked, true, "the daily schedule is global rather than per-thread");
+  assert.equal(dailyToggle().disabled, false, "daily schedule can be edited without a selected thread");
+  assert.equal(dailyModel().value, "gpt-6.1-sol", "the selected model is global even with no active development thread");
+  const nextDailyNode = new Date(2026, 6, 25, 7, 0).getTime();
+  const lastDailyAttempt = new Date(2026, 6, 24, 22, 0).getTime();
+  for (const [status, reason, text] of [
+    ["waiting", "next-node", "等待每日计划节点"],
+    ["waiting", "window-observing", "正在核对额度窗口，稍后重试"],
+    ["waiting", "window-expiring", "等待当前窗口到期"],
+    ["skipped", "active-window", "已有有效的 5 小时窗口"],
+    ["skipped", "model-unavailable", "指定模型或 low 强度不可用"],
+    ["submitting", null, "正在提交保活请求"],
+    ["submitted", "awaiting-confirmation", "等待官方额度数据确认新窗口"],
+    ["confirmed", "confirmed", "已从官方额度数据确认新窗口"],
+    ["uncertain", "uncertain", "本次不会重复发送"],
+    ["error", "state-unavailable", "无法可靠保存执行记录"],
+    ["skipped", "thread-unavailable", "专用保活对话无法安全复用"],
+  ]) {
+    window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...usage, dailyKeepAlive: { status, reason, nextAt: nextDailyNode, lastAttemptAt: lastDailyAttempt } });
+    assert.match(dailySection().querySelector('[role="status"]').textContent, new RegExp(text));
+    assert.equal(dailySection().querySelector('[role="status"]').dataset.status, status);
+    assert.equal(dailySection().querySelector(".usage-daily-keep-alive-next").textContent, "下次节点：07-25 07:00");
+    assert.equal(dailySection().querySelector(".usage-daily-keep-alive-last").textContent, "最近尝试：07-24 22:00");
+  }
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...usage, dailyKeepAlive: { status: "error", reason: "private-error-secret", nextAt: -1 } });
+  assert.equal(dailySection().textContent.includes("private-error-secret"), false, "untrusted error text never appears in the UI");
+  assert.equal(dailySection().querySelector(".usage-daily-keep-alive-next"), null);
+  dailyTime().value = "";
+  dailyTime().dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(dailyTime().value, "07:00", "invalid or cleared times revert to a valid default");
+  dailyToggle().click();
+  assert.equal(dailySection().querySelector('[role="status"]').textContent, "定时保活已关闭");
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage);
+  assert.equal(host.shadowRoot.querySelectorAll('.usage-column:nth-child(2) .usage-mode-toggle input[type="checkbox"]').length, 7);
+  const refreshToggle = () => host.shadowRoot.querySelector('input[data-setting="refreshEvery30Seconds"]');
+  assert.equal(refreshToggle().checked, false);
+  refreshToggle().click();
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.getSettings().refreshEvery30Seconds, true);
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).refreshEvery30Seconds, true);
+  refreshToggle().click();
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.getSettings().refreshEvery30Seconds, false);
+  const autoResumeMetric = host.shadowRoot.querySelector('input[data-source="session"][data-metric="autoResume"]');
+  assert.equal(autoResumeMetric.checked, false);
+  assert.equal(autoResumeMetric.closest(".usage-detail-row").nextElementSibling.className, "usage-auto-resume-field");
+  autoResumeMetric.click();
+  let summaryResume = host.shadowRoot.querySelector('.usage-summary-item[data-metric="autoResume"]');
+  assert.equal(summaryResume.textContent, "续跑");
+  assert.equal(summaryResume.querySelector('input[data-summary-setting="autoResume"]').checked, false);
+  summaryResume.querySelector('input[data-summary-setting="autoResume"]').click();
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).autoResumeThreads[currentThreadId].enabled, true);
+  assert.equal(host.shadowRoot.querySelector(".usage-popover").hidden, false);
+  assert.equal(host.shadowRoot.querySelector('.usage-detail-row input[data-setting="autoResume"]').checked, true);
+  summaryResume = host.shadowRoot.querySelector('.usage-summary-item[data-metric="autoResume"]');
+  summaryResume.querySelector('input[data-summary-setting="autoResume"]').click();
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).autoResumeThreads[currentThreadId].enabled, false);
+  assert.equal(host.shadowRoot.querySelector(".usage-popover").hidden, false);
+  host.shadowRoot.querySelector('input[data-setting="minimalMode"]').click();
+  summaryResume = host.shadowRoot.querySelector('.usage-summary-item[data-metric="autoResume"]');
+  assert.equal(summaryResume.textContent, "");
+  assert.ok(summaryResume.querySelector('input[data-summary-setting="autoResume"]'));
+  host.shadowRoot.querySelector('input[data-setting="minimalMode"]').click();
+  assert.equal(host.shadowRoot.querySelector('.usage-summary-item[data-metric="autoResume"]').textContent, "续跑");
+  host.shadowRoot.querySelector('input[data-source="session"][data-metric="autoResume"]').click();
+  assert.equal(host.shadowRoot.querySelector('.usage-column-footer').firstElementChild.className, "usage-mode-switches");
+  assert.equal(host.shadowRoot.querySelector('.usage-column-footer').lastElementChild.className, "usage-column-meta");
+  assert.equal(columns[1].querySelector(".usage-column-footer").nextElementSibling, columns[1].querySelector(".usage-column-brand"));
+  host.shadowRoot.querySelector('input[data-setting="showApiColumns"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-column-heading")].map((item) => item.textContent), ["本会话", "官方订阅", "重置概率预测（仅供参考）"]);
+  assert.equal(host.shadowRoot.querySelector(".usage-columns").style.getPropertyValue("--usage-column-count"), "3");
+  assert.equal(host.style.getPropertyValue("--usage-column-widths"), "230px 230px 160px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-width"), "660px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-shift"), "-176px");
+  assert.equal(host.shadowRoot.querySelector('.usage-column[data-status="ready"] + .usage-column .usage-column-footer') !== null, true);
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).showApiColumns, false);
+  host.shadowRoot.querySelector('input[data-setting="showResetForecast"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-column-heading")].map((item) => item.textContent), ["本会话", "官方订阅"]);
+  assert.equal(host.style.getPropertyValue("--usage-column-widths"), "230px 230px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-width"), "500px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-shift"), "-16px");
+  host.shadowRoot.querySelector('input[data-setting="showApiColumns"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-column-heading")].map((item) => item.textContent), ["本会话", "官方订阅", "API 账户", "API Key"]);
+  assert.equal(host.style.getPropertyValue("--usage-column-widths"), "230px 230px 230px 170px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-width"), "900px");
+  assert.equal(host.style.getPropertyValue("--usage-popover-shift"), "-138px");
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).showApiColumns, true);
+  host.shadowRoot.querySelector('input[data-setting="showResetForecast"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-column").length, 5);
+  assert.equal(host.style.getPropertyValue("--usage-column-widths"), "230px 230px 160px 230px 170px");
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).showResetForecast, true);
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="showQuotaToken"]'), null);
+  assert.equal(host.shadowRoot.querySelector('.usage-column[data-source="quota-token"]'), null);
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).showQuotaToken, undefined);
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-config-trigger")].map((button) => button.textContent), ["配置", "配置"]);
+  host.shadowRoot.querySelector('[data-configure-source="api-account"]').click();
+  let accountForm = host.shadowRoot.querySelector('[data-config-source="api-account"]');
+  assert.ok(accountForm);
+  assert.equal(accountForm.querySelector('[data-config-field="baseUrl"]').value, "https://www.cctq.ai");
+  assert.equal(accountForm.querySelector('[data-config-field="userId"]').value, "10530");
+  assert.equal(accountForm.querySelector('[data-config-field="token"]').type, "password");
+  assert.equal(accountForm.querySelector('[data-config-field="token"]').closest(".usage-config-field").querySelector(".usage-config-label").textContent, "访问令牌（Access Token）");
+  assert.match(accountForm.querySelector('[data-config-field="token"]').closest(".usage-config-field").querySelector(".usage-config-hint").textContent, /不显示已保存的凭据/);
+  assert.equal(accountForm.querySelector('[data-config-field="initialTokens"]').value, "123456");
+  assert.match(accountForm.querySelector('[data-config-field="initialTokens"]').closest(".usage-config-field").querySelector(".usage-config-hint").textContent, /完整整数/);
+  accountForm.requestSubmit();
+  assert.equal(configurationPayloads.length, 1);
+  assert.equal(configurationPayloads[0].type, "api-account");
+  assert.equal(configurationPayloads[0].token, "");
+  assert.equal(configurationPayloads[0].initialTokens, "123456");
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.configurationResult(configurationPayloads[0].requestId, {
+    ok: true,
+    configuration: window.__CODEX_USAGE_MONITOR_CONFIGURATION__,
+  }), true);
+  assert.match(host.shadowRoot.querySelector(".usage-config-status").textContent, /安全保存/);
+  host.shadowRoot.querySelector('[data-configure-source="api-account"]').click();
+  host.shadowRoot.querySelector('[data-configure-source="acme"]').click();
+  const configuredProviderForm = host.shadowRoot.querySelector('[data-config-source="acme"]');
+  assert.equal(configuredProviderForm.querySelector('[data-config-field="preset"]'), null);
+  assert.equal(configuredProviderForm.querySelector('[data-config-field="apiKey"]').type, "password");
+  assert.equal(configuredProviderForm.querySelector(".usage-config-disclosure > summary").textContent, "连接设置");
+  assert.equal(configuredProviderForm.querySelector(".usage-config-disclosure").open, false);
+  assert.doesNotMatch(configuredProviderForm.textContent, /CCTQ/);
+  configuredProviderForm.requestSubmit();
+  assert.equal(configurationPayloads.length, 2);
+  assert.equal(configurationPayloads[1].type, "api-key");
+  assert.equal(configurationPayloads[1].preset, undefined);
+  assert.equal(configurationPayloads[1].provider.label, "API Key");
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.configurationResult(configurationPayloads[1].requestId, {
+    ok: true,
+    configuration: window.__CODEX_USAGE_MONITOR_CONFIGURATION__,
+  }), true);
+  host.shadowRoot.querySelector('[data-configure-source="acme"]').click();
+  assert.equal(host.shadowRoot.querySelector(".usage-summary").firstElementChild.className, "usage-refresh-ring");
+  assert.equal(host.shadowRoot.querySelector(".usage-refresh-ring").hidden, true);
+
+  host.shadowRoot.querySelector('input[data-setting="minimalMode"]').click();
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).minimalMode, true);
+  assert.equal(host.dataset.density, "normal");
+  assert.equal(host.shadowRoot.querySelector(".usage-column-meta span:first-of-type").textContent, "极简最多 14 项");
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-summary-item")].map((item) => item.textContent), ["3822万", "75%", "¥20", "¥5", "不限"]);
+  const minimalExtraSelectors = [
+    'input[data-source="official"][data-metric="todayTokens"]',
+    'input[data-source="official"][data-metric="lifetimeTokens"]',
+    'input[data-source="api-account"][data-metric="totalTokens"]',
+    'input[data-source="api-account"][data-metric="todayTokens"]',
+    'input[data-source="api-account"][data-metric="usedQuota"]',
+    'input[data-source="api-account"][data-metric="lastQuota"]',
+    'input[data-source="api-account"][data-metric="lastModel"]',
+    'input[data-source="api-account"][data-metric="lastRequestAt"]',
+    'input[data-source="api-account"][data-metric="lastLatency"]',
+  ];
+  for (const [index, selector] of minimalExtraSelectors.entries()) {
+    host.shadowRoot.querySelector(selector).click();
+    if (index === 2) assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 8);
+    if (index === 2) assert.equal(host.dataset.density, "normal");
+  }
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 14);
+  assert.equal(host.dataset.density, "packed");
+  const fifteenth = host.shadowRoot.querySelector('input[data-source="acme"][data-metric="expiresAt"]');
+  assert.equal(fifteenth.disabled, true);
+  fifteenth.checked = true;
+  fifteenth.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 14);
+  for (const selector of minimalExtraSelectors) {
+    const input = host.shadowRoot.querySelector(selector);
+    input.checked = false;
+    input.dispatchEvent(new window.Event("change", { bubbles: true }));
+  }
+  assert.deepEqual(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).metrics["api-account"], ["balance"]);
+  host.shadowRoot.querySelector('input[data-setting="minimalMode"]').click();
+  assert.notEqual(host.dataset.density, "normal");
+
+  host.shadowRoot.querySelector('input[data-setting="countdownVisualization"]').click();
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).countdownVisualization, true);
+  assert.equal(host.shadowRoot.querySelector(".usage-refresh-ring").hidden, false);
+  const realDateNow = window.Date.now;
+  let ringNow = realDateNow();
+  window.Date.now = () => ringNow;
+  const firstCycleUsage = structuredClone(usage);
+  firstCycleUsage.nextRefreshAt = ringNow + 60000;
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(firstCycleUsage), true);
+  assert.equal(host.shadowRoot.querySelector(".usage-refresh-ring").style.getPropertyValue("--usage-refresh-progress"), "0deg");
+  ringNow += 30000;
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(firstCycleUsage), true);
+  assert.equal(host.shadowRoot.querySelector(".usage-refresh-ring").style.getPropertyValue("--usage-refresh-progress"), "180deg");
+  ringNow += 30000;
+  const reverseCycleUsage = structuredClone(usage);
+  reverseCycleUsage.nextRefreshAt = ringNow + 60000;
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(reverseCycleUsage), true);
+  assert.equal(host.shadowRoot.querySelector(".usage-refresh-ring").style.getPropertyValue("--usage-refresh-progress"), "0deg");
+  ringNow += 60000;
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(reverseCycleUsage), true);
+  assert.equal(host.shadowRoot.querySelector(".usage-refresh-ring").style.getPropertyValue("--usage-refresh-progress"), "360deg");
+  window.Date.now = realDateNow;
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
+
+  const proUsage = structuredClone(usage);
+  proUsage.sources.official = toOfficialUsageSource(normalizeUsageView({
+    rateLimits: { limitId: "codex", planType: "pro", primary: { usedPercent: 56, windowDurationMins: 10080, resetsAt: secondaryResetsAt } },
+    rateLimitsByLimitId: { codex_bengalfox: { limitId: "codex_bengalfox", primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: primaryResetsAt } } },
+  }, null));
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(proUsage);
+  const primaryCheckbox = () => host.shadowRoot.querySelector('input[data-source="official"][data-metric="primaryRemaining"]');
+  const primarySummary = () => host.shadowRoot.querySelector('.usage-summary-item[data-source="official"][data-metric="primaryRemaining"]');
+  assert.ok(primaryCheckbox(), "Pro retains the 5h row and checkbox");
+  assert.equal(primaryCheckbox().checked, true, "saved selection survives");
+  assert.equal(primaryCheckbox().closest('.usage-detail-row').querySelector('.usage-detail-value').textContent, "--");
+  assert.equal(primarySummary().textContent, "5时--");
+  host.shadowRoot.querySelector('input[data-setting="minimalMode"]').click();
+  assert.equal(primarySummary().textContent, "--");
+  host.shadowRoot.querySelector('input[data-setting="minimalMode"]').click();
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage);
+  assert.equal(primarySummary().textContent, "5时75%", "other plans resume their normal value");
+
+  const resumeMessageInput = host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]');
+  resumeMessageInput.value = "请继续完成当前任务";
+  resumeMessageInput.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).autoResumeThreads[currentThreadId].message, "请继续完成当前任务");
+  host.shadowRoot.querySelector('input[data-setting="autoResume"]').click();
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).autoResumeThreads[currentThreadId].enabled, true);
+
+  const otherUsage = structuredClone(usage);
+  otherUsage.currentThreadId = otherThreadId;
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(otherUsage), true);
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="autoResume"]').checked, false);
+  host.shadowRoot.querySelector('input[data-setting="autoResume"]').click();
+  const otherMessageInput = host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]');
+  otherMessageInput.value = "继续 B";
+  otherMessageInput.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const independentSettings = JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2"));
+  assert.equal(independentSettings.autoResumeThreads[currentThreadId].enabled, true);
+  assert.equal(independentSettings.autoResumeThreads[currentThreadId].message, "请继续完成当前任务");
+  assert.equal(independentSettings.autoResumeThreads[otherThreadId].enabled, true);
+  assert.equal(independentSettings.autoResumeThreads[otherThreadId].message, "继续 B");
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage), true);
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="autoResume"]').checked, true);
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').value, "请继续完成当前任务");
+
+  const sharedSelector = 'input[data-setting="autoResumeSharedMessage"]';
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...usage, autoResume: {status: "waiting", reason: "desktop-send-timeout"} });
+  assert.equal(host.shadowRoot.querySelector('.usage-auto-resume-error').textContent, "续跑发送超时，等待重试");
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage);
+  assert.equal(host.shadowRoot.querySelector('.usage-auto-resume-error'), null);
+  assert.equal(host.shadowRoot.querySelector(sharedSelector).checked, false);
+  host.shadowRoot.querySelector(sharedSelector).click();
+  const sharedMessageInput = host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]');
+  sharedMessageInput.value = "所有对话继续";
+  sharedMessageInput.dispatchEvent(new window.Event("change", { bubbles: true }));
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...usage, currentThreadId: otherThreadId });
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').value, "所有对话继续");
+  host.shadowRoot.querySelector('input[data-setting="autoResume"]').click();
+  assert.equal(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).autoResumeThreads[otherThreadId].message, "继续 B");
+  host.shadowRoot.querySelector('input[data-setting="autoResume"]').click();
+  host.shadowRoot.querySelector(sharedSelector).click();
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').value, "所有对话继续");
+  const retainedSettings = JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2"));
+  assert.equal(retainedSettings.autoResumeThreads[currentThreadId].message, "所有对话继续");
+  assert.equal(retainedSettings.autoResumeThreads[otherThreadId].message, "所有对话继续");
+  const independentMessage = host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]');
+  independentMessage.value = "B 单独修改";
+  independentMessage.dispatchEvent(new window.Event("change", { bubbles: true }));
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage);
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').value, "所有对话继续");
+  const currentMessage = host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]');
+  currentMessage.value = "请继续完成当前任务";
+  currentMessage.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const densityToggle = host.shadowRoot.querySelector('input[data-source="api-account"][data-metric="balance"]');
+  assert.equal(densityToggle.checked, true);
+  densityToggle.click();
+  assert.deepEqual(JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2")).metrics["api-account"], []);
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 4);
+  assert.equal(host.dataset.density, "normal");
+  host.shadowRoot.querySelector('input[data-source="api-account"][data-metric="balance"]').click();
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 5);
+  assert.notEqual(host.dataset.density, "normal");
+
+  const stableInput = host.shadowRoot.querySelector('[data-source="api-account"][data-metric="totalTokens"]');
+  stableInput.focus();
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(host.shadowRoot.querySelector('[data-source="api-account"][data-metric="totalTokens"]'), stableInput);
+  stableInput.blur();
+
+  for (const selector of [
+    '[data-source="api-account"][data-metric="totalTokens"]',
+    '[data-source="api-account"][data-metric="todayTokens"]',
+    '[data-source="acme"][data-metric="expiresAt"]',
+  ]) {
+    const input = host.shadowRoot.querySelector(selector);
+    input.checked = true;
+    input.dispatchEvent(new window.Event("change", { bubbles: true }));
+  }
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 8);
+  assert.equal(host.dataset.density, "packed");
+  assert.deepEqual(
+    [...host.shadowRoot.querySelectorAll(".usage-summary-item")].map((item) => `${item.dataset.source}:${item.dataset.metric}`),
+    [
+      "session:currentTaskTokens",
+      "official:primaryRemaining",
+      "acme:usedAmount",
+      "acme:quotaLimit",
+      "api-account:balance",
+      "api-account:totalTokens",
+      "api-account:todayTokens",
+      "acme:expiresAt",
+    ],
+  );
+  const ninth = host.shadowRoot.querySelector('[data-source="api-account"][data-metric="lastModel"]');
+  assert.equal(ninth.disabled, true);
+  ninth.checked = true;
+  ninth.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 8);
+
+  const balance = host.shadowRoot.querySelector('input[data-source="api-account"][data-metric="balance"]');
+  balance.checked = false;
+  balance.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 7);
+  assert.equal(host.shadowRoot.querySelector('[data-source="api-account"][data-metric="lastModel"]').disabled, false);
+
+  const saved = JSON.parse(window.localStorage.getItem("codex-usage-monitor-settings-v2"));
+  assert.equal(saved.unifiedMetricsVersion, 2);
+  assert.equal(saved.source, undefined);
+  assert.deepEqual(saved.metrics["api-account"], ["totalTokens", "todayTokens"]);
+  assert.deepEqual(saved.metricOrder, [
+    "session:currentTaskTokens",
+    "official:primaryRemaining",
+    "acme:usedAmount",
+    "acme:quotaLimit",
+    "api-account:totalTokens",
+    "api-account:todayTokens",
+    "acme:expiresAt",
+  ]);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, true);
+  assert.match(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().strategy, /composer|editable/);
+
+  host.shadowRoot.querySelector('input[data-setting="englishUi"]').click();
+  assert.deepEqual(
+    [...host.shadowRoot.querySelectorAll(".usage-column")].map((column) => column.querySelector(".usage-column-heading").textContent),
+    ["Session", "Official Subscription", "Reset Probability (FYI)", "API Account", "API Key"],
+  );
+  assert.equal(host.shadowRoot.querySelector(".usage-tibo-activity-label").textContent, "Latest from Tibo");
+  assert.equal(host.shadowRoot.querySelector(".usage-reset-method").textContent, "Announced type: Reset credit");
+  assert.equal(host.shadowRoot.querySelector(".usage-tibo-activity-link").textContent, "Open X");
+  assert.equal(host.shadowRoot.querySelector('input[data-metric="primaryRemaining"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "5-hour remaining");
+  assert.equal(host.shadowRoot.querySelector('input[data-metric="primaryRemaining"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "resets 07-24 12:00 · 75%");
+  assert.equal(host.shadowRoot.querySelector('input[data-metric="secondaryRemaining"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "resets 07-30 07:00 · 44%");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="official"][data-metric="todayTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "128K");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="official"][data-metric="lifetimeTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "12M");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="currentTaskTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Current session tokens");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="executionTime"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Total execution time");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="executionTime"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "11m31s");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="autoResume"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Resume after reset");
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').closest(".usage-auto-resume-field").querySelector(".usage-auto-resume-label").textContent, "Resume message");
+  assert.equal(host.shadowRoot.querySelector('.usage-daily-keep-alive [data-setting="dailyKeepAlive"]').getAttribute("aria-label"), "Daily scheduled keep-alive");
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="dailyKeepAliveStart"]').getAttribute("aria-label"), "Daily start (local time)");
+  assert.equal(host.shadowRoot.querySelector('[data-setting-select="dailyKeepAliveModel"]').getAttribute("aria-label"), "Model (low)");
+  dailyToggle().click();
+  for (const [reason, text] of [
+    ["window-observing", "Checking the quota window; retrying shortly"],
+    ["window-expiring", "Waiting for the current window to expire"],
+  ]) {
+    window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...usage, dailyKeepAlive: { status: "waiting", reason } });
+    assert.equal(dailySection().querySelector('[role="status"]').dataset.status, "waiting");
+    assert.equal(dailySection().querySelector('[role="status"]').textContent, `Waiting for a scheduled node · ${text}`);
+  }
+  dailyToggle().click();
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage);
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]').value, "请继续完成当前任务");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="currentTaskTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "38.22M");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="lastTurnTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Last answer tokens");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="cacheHitRate"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Total cache hit rate");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="official"][data-metric="last7DaysTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Tokens in last 7 days");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="official"][data-metric="last7DaysTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "2.4M");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="lastTurnTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "80K");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="contextCompactions"]').closest(".usage-detail-row").querySelector(".usage-detail-label").textContent, "Automatic context compactions");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="session"][data-metric="contextCompactions"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "3");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="api-account"][data-metric="todayTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "40K");
+  assert.equal(host.shadowRoot.querySelector('input[data-source="api-account"][data-metric="totalTokens"]').closest(".usage-detail-row").querySelector(".usage-detail-value").textContent, "360K");
+  host.shadowRoot.querySelector('input[data-setting="englishUi"]').click();
+
+  window.document.getElementById("composer-wrapper").innerHTML = composerMarkup();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+  host = window.document.getElementById("codex-usage-monitor");
+  assert.ok(host?.shadowRoot);
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-summary-item").length, 7);
+  assert.equal(host.shadowRoot.querySelector(".usage-refresh-ring").hidden, false);
+
+  // Goal/plan mode chips occupy the old permission-adjacent anchor.
+  const modeComposer = window.document.querySelector('.composer-surface-chrome');
+  const modeChips = [];
+  for (const specs of [[['计划模式', 228, 80]], [['目标', 228, 110]], [['计划模式', 228, 80], ['目标', 312, 90]]]) {
+    for (const chip of modeChips.splice(0)) chip.remove();
+    for (const [label, x, width] of specs) {
+      const chip = window.document.createElement('button');
+      chip.textContent = label;
+      chip.getBoundingClientRect = () => ({ x, y: 164, width, height: 28, right: x + width, bottom: 192 });
+      modeComposer.append(chip);
+      modeChips.push(chip);
+    }
+    window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+    assert.equal(host.hidden, false, 'mode chips should use the available gap to their right');
+    assert.equal(host.dataset.anchor, 'right-control-gap');
+    const left = Number.parseFloat(host.style.getPropertyValue('--usage-left'));
+    const width = Number.parseFloat(host.style.getPropertyValue('--usage-max-width'));
+    assert.equal(left, Math.max(...specs.map(([, x, width]) => x + width)) + 8);
+    assert.ok(left + width <= 622 - 8, 'monitor must not overlap the model selector');
+  }
+  for (const chip of modeChips) chip.remove();
+  window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+  assert.equal(host.dataset.anchor, 'approval');
+  assert.equal(host.style.getPropertyValue('--usage-left'), '234px');
+
+  // A question card puts the editable into the toolbar gap. Reserve a real
+  // row beneath it and undo the reservation when the layout returns to normal.
+  const questionComposer = window.document.querySelector('.composer-surface-chrome');
+  const questionEditable = questionComposer.querySelector('[contenteditable="true"]');
+  questionComposer.style.setProperty('padding-bottom', '6px', 'important');
+  questionComposer.getBoundingClientRect = () => {
+    const extra = Number.parseFloat(questionComposer.style.paddingBottom) - 6;
+    return { x: 100, y: 100, width: 700, height: 100 + extra, right: 800, bottom: 200 + extra };
+  };
+  questionEditable.getBoundingClientRect = () =>
+    ({ x: 234, y: 164, width: 380, height: 28, right: 614, bottom: 192 });
+  for (let repeat = 0; repeat < 3; repeat += 1) {
+    window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+    assert.equal(host.hidden, false);
+    assert.equal(host.dataset.anchor, 'reserved-composer-row');
+    assert.equal(questionComposer.style.paddingBottom, '42px', 'reservation must not accumulate');
+    const top = Number.parseFloat(host.style.getPropertyValue('--usage-top'));
+    assert.ok(top >= 192 + 4, 'monitor must be below the editable and buttons');
+    assert.ok(top + 28 <= questionComposer.getBoundingClientRect().bottom - 6);
+  }
+  window.__CODEX_USAGE_MONITOR_STATE__.cleanup();
+  assert.equal(questionComposer.style.paddingBottom, '6px', 'cleanup restores native spacing');
+  assert.equal(questionComposer.style.getPropertyPriority('padding-bottom'), 'important');
+  window.eval(payload);
+  host = window.document.getElementById('codex-usage-monitor');
+  assert.equal(host.dataset.anchor, 'reserved-composer-row');
+  delete questionEditable.getBoundingClientRect;
+  window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+  assert.equal(questionComposer.style.paddingBottom, '6px', 'normal input restores native spacing');
+  assert.equal(host.dataset.anchor, 'approval');
+
+  window.document.getElementById("composer-wrapper").innerHTML = updatedComposerMarkup();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  window.__CODEX_USAGE_MONITOR_STATE__.ensure();
+  host = window.document.getElementById("codex-usage-monitor");
+  assert.ok(host?.shadowRoot);
+  assert.equal(host.hidden, false);
+  assert.equal(host.dataset.anchor, "control-gap");
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, true);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().strategy, "explicit-editable");
+  assert.ok(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().availableWidth > 300);
+
+  // Both desktop modes share the layout and data-codex-composer attribute.
+  // ChatGPT Work must remain supported under the same global ChatGPT mode.
+  const savedModeSettings = JSON.stringify(window.__CODEX_USAGE_MONITOR_STATE__.getSettings());
+  const placementModule = window.__CODEX_USAGE_MONITOR_MODULES__.placement;
+  const chatEditable = window.document.querySelector('#composer-wrapper [contenteditable="true"]');
+  const modeSwitch = window.document.createElement("button");
+  modeSwitch.setAttribute("aria-haspopup", "menu");
+  modeSwitch.setAttribute("aria-label", "切换模式，当前模式：Codex");
+  modeSwitch.textContent = "Codex";
+  modeSwitch.getBoundingClientRect = () => ({ x: 10, y: 10, width: 100, height: 30, right: 110, bottom: 40 });
+  window.document.body.appendChild(modeSwitch);
+  host.shadowRoot.querySelector(".usage-summary").click();
+  modeSwitch.textContent = "ChatGPT";
+  modeSwitch.setAttribute("aria-label", "切换模式，当前模式：ChatGPT");
+  chatEditable.setAttribute("aria-label", "使用 ChatGPT Work");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.ok(window.document.getElementById("codex-usage-monitor"), "ChatGPT Work must stay mounted");
+  chatEditable.setAttribute("aria-label", "给 ChatGPT 发送消息");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(window.document.getElementById("codex-usage-monitor"), null);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().reason, "chatgpt-composer");
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage);
+  assert.equal(window.document.getElementById("codex-usage-monitor"), null, "usage refresh must not remount in ChatGPT");
+  assert.equal(window.eval(payload).installed, false, "fresh injection in ChatGPT must stay hidden");
+  modeSwitch.firstChild.data = "Codex";
+  modeSwitch.setAttribute("aria-label", "Switch mode, current mode: Codex");
+  chatEditable.setAttribute("aria-label", "随心输入");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.ok(window.document.getElementById("codex-usage-monitor")?.shadowRoot);
+  modeSwitch.firstChild.data = "ChatGPT";
+  modeSwitch.setAttribute("aria-label", "Switch mode, current mode: ChatGPT");
+  chatEditable.setAttribute("aria-label", "Message ChatGPT");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(window.document.getElementById("codex-usage-monitor"), null);
+  modeSwitch.remove();
+
+  chatEditable.removeAttribute("aria-label");
+  chatEditable.setAttribute("data-codex-composer", "true");
+  for (const [attribute, label] of [["aria-label", "给 ChatGPT 发送消息"], ["placeholder", "Message ChatGPT"]]) {
+    chatEditable.setAttribute(attribute, label);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(window.document.getElementById("codex-usage-monitor"), null);
+    assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().reason, "chatgpt-composer");
+    chatEditable.removeAttribute(attribute);
+  }
+  const wrapper = window.document.getElementById("composer-wrapper");
+  wrapper.setAttribute("data-conversation-id", "chatgpt:test-conversation");
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.ensure(), null);
+  chatEditable.setAttribute("aria-label", "Use ChatGPT Work");
+  assert.ok(window.__CODEX_USAGE_MONITOR_STATE__.ensure(), "explicit Work metadata wins over a shared ChatGPT namespace");
+  chatEditable.removeAttribute("aria-label");
+  wrapper.removeAttribute("data-conversation-id");
+  assert.ok(window.__CODEX_USAGE_MONITOR_STATE__.ensure());
+  const chatSide = window.document.createElement("div");
+  chatSide.innerHTML = composerMarkup().replace('contenteditable="true"', 'contenteditable="true" aria-label="Message ChatGPT"');
+  window.document.body.prepend(chatSide);
+  assert.ok(window.__CODEX_USAGE_MONITOR_STATE__.ensure(), "a ChatGPT side composer must not hide the main Codex monitor");
+  const placement = placementModule.findPlacement("codex-usage-monitor");
+  assert.ok(wrapper.contains(placement.composer), "fresh selection must exclude the ChatGPT side composer");
+  chatSide.remove();
+  assert.equal(JSON.stringify(window.__CODEX_USAGE_MONITOR_STATE__.getSettings()), savedModeSettings);
+
+  // Dot shares the composer layout, but its page has Orbit-specific variables.
+  wrapper.style.setProperty('--orbit-message-link-color', 'var(--color-text-chat-accent-slate)');
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.ensure(), null);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().reason, 'dot-composer');
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage(usage);
+  assert.equal(window.document.getElementById('codex-usage-monitor'), null, 'refresh must not mount in Dot');
+  assert.equal(window.eval(payload).installed, false, 'fresh injection in Dot must stay hidden');
+  wrapper.style.removeProperty('--orbit-message-link-color');
+  assert.ok(window.__CODEX_USAGE_MONITOR_STATE__.ensure(), 'leaving Dot restores the monitor');
+  const dotSide = window.document.createElement('div');
+  dotSide.style.setProperty('--orbit-messages-content-x', '0px');
+  dotSide.innerHTML = composerMarkup();
+  window.document.body.prepend(dotSide);
+  assert.ok(window.__CODEX_USAGE_MONITOR_STATE__.ensure(), 'a Dot side composer must not hide the main monitor');
+  assert.ok(wrapper.contains(placementModule.findPlacement('codex-usage-monitor').composer));
+  dotSide.remove();
+  assert.equal(JSON.stringify(window.__CODEX_USAGE_MONITOR_STATE__.getSettings()), savedModeSettings);
+
+  window.document.getElementById("composer-wrapper").replaceChildren();
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.ensure(), null);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, false);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().reason, "visible-editable-not-found");
+  window.document.getElementById("composer-wrapper").innerHTML = composerMarkup();
+  assert.ok(window.__CODEX_USAGE_MONITOR_STATE__.ensure()?.shadowRoot);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, true);
+
+  const reinjected = window.eval(payload);
+  assert.equal(reinjected.installed, true);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.diagnose().ok, true);
+
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.cleanup(), true);
+  assert.equal(window.document.getElementById("codex-usage-monitor"), null);
+  assert.equal(window.__CODEX_USAGE_MONITOR_MODULES__, undefined);
+
+  const persistedPayloads = [];
+  window.__codexUsageMonitorSaveSettings = (value) => persistedPayloads.push(JSON.parse(value));
+  window.localStorage.clear();
+  delete window.__CODEX_USAGE_MONITOR_PERSISTED_SETTINGS__;
+  window.__CODEX_USAGE_MONITOR_CONFIGURATION__ = {
+    account: { configured: false, baseUrl: "https://www.cctq.ai", userId: "", baselineConfigured: false, initialTokens: "0" },
+    provider: { configured: false },
+  };
+  window.__CODEX_USAGE_MONITOR__ = usage;
+  assert.equal(window.eval(payload).installed, true);
+  host = window.document.getElementById("codex-usage-monitor");
+  host.shadowRoot.querySelector(".usage-summary").click();
+  assert.deepEqual([...host.shadowRoot.querySelectorAll(".usage-column-heading")].map((item) => item.textContent), ["本会话", "官方订阅", "重置概率预测（仅供参考）"]);
+  host.shadowRoot.querySelector("[data-toggle-settings]").click();
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="showApiColumns"]').checked, false);
+  assert.equal(host.shadowRoot.querySelector('input[data-setting="showResetForecast"]').checked, true);
+  host.shadowRoot.querySelector('input[data-setting="showApiColumns"]').click();
+  assert.equal(host.shadowRoot.querySelectorAll(".usage-column").length, 5);
+  host.shadowRoot.querySelector('[data-configure-source="acme"]').click();
+  const beginnerForm = host.shadowRoot.querySelector('[data-config-source="acme"]');
+  assert.equal(beginnerForm.querySelector('[data-config-field="preset"]'), null);
+  assert.equal(beginnerForm.querySelector('[data-config-field="baseUrl"]').value, "");
+  assert.equal(beginnerForm.querySelector('[data-config-field="usagePath"]').value, "");
+  assert.equal(beginnerForm.querySelector(".usage-config-disclosure > summary").textContent, "高级设置（通常无需修改）");
+  assert.doesNotMatch(beginnerForm.textContent, /CCTQ/);
+  for (const [name, value] of [["apiKey", "test-key"], ["baseUrl", "https://api.example.com"], ["usagePath", "/v1/usage"], ["authHeader", ""]]) {
+    const input = beginnerForm.querySelector(`[data-config-field="${name}"]`);
+    input.value = value;
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  }
+  beginnerForm.requestSubmit();
+  assert.equal(beginnerForm.querySelector(".usage-config-disclosure").open, true);
+  assert.match(beginnerForm.querySelector('[data-config-error="authHeader"]').textContent, /不能为空/);
+  host.shadowRoot.querySelector('[data-configure-source="acme"]').click();
+  host.shadowRoot.querySelector(".usage-summary").click();
+  assert.deepEqual(
+    [...host.shadowRoot.querySelectorAll(".usage-summary-item")].map((item) => item.dataset.metric),
+    ["currentTaskTokens", "secondaryRemaining"],
+  );
+  assert.deepEqual(
+    [...host.shadowRoot.querySelectorAll('input[data-source="session"]:checked, input[data-source="official"]:checked')].map((item) => `${item.dataset.source}:${item.dataset.metric}`),
+    ["session:currentTaskTokens", "official:secondaryRemaining"],
+  );
+  assert.equal(host.shadowRoot.querySelectorAll('input[data-source="api-account"]:checked, input[data-source="acme"]:checked').length, 0);
+  assert.ok(persistedPayloads.length >= 1);
+  assert.deepEqual(persistedPayloads.at(-1).metrics, {});
+
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.cleanup(), true);
+  window.localStorage.clear();
+  window.__CODEX_USAGE_MONITOR_PERSISTED_SETTINGS__ = {
+    schemaVersion: 1,
+    metrics: { official: ["lifetimeTokens"] },
+    apiKeyMetricsVersion: 0,
+    officialMetricsVersion: 0,
+    unifiedMetricsVersion: 2,
+    minimalMode: true,
+    countdownVisualization: false,
+    englishUi: false,
+    updateNotifications: false,
+    autoResume: false,
+    dailyKeepAlive: true,
+    dailyKeepAliveStart: "08:15",
+    dailyKeepAliveModel: "gpt-6.1-sol",
+  };
+  window.__CODEX_USAGE_MONITOR__ = usage;
+  assert.equal(window.eval(payload).installed, true);
+  host = window.document.getElementById("codex-usage-monitor");
+  assert.deepEqual(
+    [...host.shadowRoot.querySelectorAll(".usage-summary-item")].map((item) => item.dataset.metric),
+    ["currentTaskTokens", "lifetimeTokens"],
+  );
+  assert.equal(host.dataset.minimal, "true");
+  assert.equal(host.shadowRoot.querySelector('[data-setting="dailyKeepAlive"]').checked, true, "monitor-owned persisted settings restore the schedule after re-injection");
+  assert.equal(host.shadowRoot.querySelector('[data-setting-text="dailyKeepAliveStart"]').value, "08:15");
+  assert.equal(host.shadowRoot.querySelector('[data-setting-select="dailyKeepAliveModel"]').value, "gpt-6.1-sol", "monitor-owned settings restore the selected model after re-injection");
+  window.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...usage, dailyKeepAlive: { status: "waiting", models: [
+    { id: "gpt-6-luna", label: "Luna" }, { id: "gpt-6.1-sol", label: "Sol" },
+  ] } });
+  const bridgedDailyModel = host.shadowRoot.querySelector('[data-setting-select="dailyKeepAliveModel"]');
+  bridgedDailyModel.value = "gpt-6-luna";
+  bridgedDailyModel.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(persistedPayloads.at(-1).dailyKeepAliveModel, "gpt-6-luna", "model changes reach the monitor-owned persistence bridge");
+  const bridgedDailyTime = host.shadowRoot.querySelector('[data-setting-text="dailyKeepAliveStart"]');
+  bridgedDailyTime.value = "09:20";
+  bridgedDailyTime.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(persistedPayloads.at(-1).dailyKeepAliveStart, "09:20", "daily start changes reach the monitor-owned persistence bridge");
+  host.shadowRoot.querySelector('[data-setting="dailyKeepAlive"]').click();
+  assert.equal(persistedPayloads.at(-1).dailyKeepAlive, false, "daily opt-out reaches the monitor-owned persistence bridge");
+  host.shadowRoot.querySelector('input[data-source="official"][data-metric="secondaryRemaining"]').click();
+  assert.deepEqual(persistedPayloads.at(-1).metrics.official, ["lifetimeTokens", "secondaryRemaining"]);
+  assert.equal(window.__CODEX_USAGE_MONITOR_STATE__.cleanup(), true);
+  delete window.__codexUsageMonitorSaveSettings;
+  delete window.__CODEX_USAGE_MONITOR_PERSISTED_SETTINGS__;
+  // Migrate a selected old status in place, then exercise the real one-second
+  // updater with a deterministic clock (without waiting a minute in tests).
+  window.localStorage.clear();
+  window.__CODEX_USAGE_MONITOR_PERSISTED_SETTINGS__ = {
+    metrics: { session: ["currentStatus"], official: ["secondaryRemaining"] },
+    metricOrder: ["session:currentStatus", "official:secondaryRemaining"], unifiedMetricsVersion: 2,
+  };
+  const originalNow = window.Date.now;
+  const originalInterval = window.setInterval;
+  let clockNow = now;
+  let tick;
+  window.Date.now = () => clockNow;
+  window.setInterval = (callback, delay, ...args) => {
+    if (delay === 1000) tick = callback;
+    return originalInterval.call(window, callback, delay, ...args);
+  };
+  const timedUsage = (overrides = {}) => ({ ...usage, sources: { ...usage.sources, session: {
+    ...usage.sources.session, metrics: usage.sources.session.metrics.map((metric) => metric.id === "executionTime"
+      ? { ...metric, durationMs: 3600000, estimated: true, running: true, sampledAt: new Date(now).toISOString(), ...overrides } : metric),
+  } } });
+  try {
+    window.__CODEX_USAGE_MONITOR__ = timedUsage();
+    assert.equal(window.eval(payload).installed, true);
+    host = window.document.getElementById("codex-usage-monitor");
+    const monitor = window.__CODEX_USAGE_MONITOR_STATE__;
+    assert.deepEqual(Array.from(monitor.getSettings().metrics.session), ["executionTime"]);
+    assert.deepEqual(Array.from(monitor.getSettings().metricOrder), ["session:executionTime", "official:secondaryRemaining"]);
+    assert.equal(host.shadowRoot.querySelector('[data-metric="currentStatus"]'), null);
+    const durationDetail = () => host.shadowRoot.querySelector('[data-duration-value]');
+    const durationSummary = () => host.shadowRoot.querySelector('.usage-summary-item[data-metric="executionTime"]');
+    assert.equal(durationDetail().textContent, "≈1时00分00秒");
+    assert.equal(durationSummary().textContent, "耗时 ≈1时00分00秒");
+    const unchangedInput = host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]');
+    clockNow += 2500;
+    tick();
+    assert.equal(durationDetail().textContent, "≈1时00分02秒");
+    assert.equal(durationSummary().textContent, "耗时 ≈1时00分02秒");
+    assert.equal(host.shadowRoot.querySelector('[data-setting-text="autoResumeMessage"]'), unchangedInput, "clock does not rebuild controls");
+    clockNow = now + 86400000;
+    tick();
+    assert.equal(durationDetail().textContent, "≈1时01分00秒+", "stale feed cannot count an entire offline day");
+    assert.match(durationDetail().title, /记录不完整/);
+    monitor.updateUsage(timedUsage({ durationMs: 3599000, estimated: false, running: false }));
+    assert.equal(durationDetail().textContent, "59分59秒", "official duration replaces estimate");
+    clockNow += 5000;
+    tick();
+    assert.equal(durationDetail().textContent, "59分59秒", "completed execution remains frozen");
+    host.shadowRoot.querySelector('[data-setting="englishUi"]').click();
+    assert.equal(durationDetail().textContent, "59m59s");
+    host.shadowRoot.querySelector('[data-setting="minimalMode"]').click();
+    assert.equal(durationSummary().textContent, "59m59s", "minimal mode omits the label only");
+    monitor.updateUsage(timedUsage({ durationMs: 0, estimated: false, incomplete: true, running: false }));
+    assert.equal(durationDetail().textContent, "0s+");
+    monitor.updateUsage({ ...usage, currentThreadId: otherThreadId, sources: { ...usage.sources,
+      session: { ...usage.sources.session, status: "loading", metrics: [] },
+    } });
+    assert.equal(durationDetail().textContent, "--", "thread switches cannot inherit prior execution time");
+    assert.equal(durationSummary().textContent, "--");
+    window.__CODEX_USAGE_MONITOR_BACKEND__ = { pid: 123, at: clockNow, phase: "connected" };
+    tick();
+    assert.equal(host.dataset.backend, "connected");
+    assert.equal(host.shadowRoot.querySelector('.usage-backend-warning').hidden, true);
+    const preservedData = JSON.stringify(monitor.usage);
+    clockNow += 31000;
+    tick();
+    assert.equal(host.dataset.backend, "disconnected");
+    assert.equal(host.shadowRoot.querySelector('.usage-backend-warning').textContent, "Monitor disconnected");
+    assert.equal(host.shadowRoot.querySelector('.usage-backend-warning').hidden, false);
+    assert.match(host.shadowRoot.querySelector('.usage-backend-notice').textContent, /desktop shortcut/);
+    assert.match(host.shadowRoot.querySelector('.usage-summary').getAttribute('aria-label'), /outdated/);
+    assert.equal(JSON.stringify(monitor.usage), preservedData, "disconnect warning preserves last data, not fabricated zeroes");
+    window.__CODEX_USAGE_MONITOR_BACKEND__.at = clockNow;
+    tick();
+    assert.equal(host.dataset.backend, "connected");
+    assert.equal(host.shadowRoot.querySelector('.usage-backend-notice').hidden, true);
+    assert.doesNotMatch(host.shadowRoot.querySelector('.usage-summary').getAttribute('aria-label'), /disconnected/);
+  } finally {
+    window.__CODEX_USAGE_MONITOR_STATE__.cleanup();
+    window.Date.now = originalNow;
+    window.setInterval = originalInterval;
+    delete window.__CODEX_USAGE_MONITOR_BACKEND__;
+    delete window.__CODEX_USAGE_MONITOR_PERSISTED_SETTINGS__;
+  }
+  // History is narrower than the five-column panel. Refreshes also replace its
+  // entry button, so neither positioning nor focus may keep those old nodes.
+  window.localStorage.clear();
+  window.document.getElementById("composer-wrapper").innerHTML = composerMarkup();
+  const historyNow = new Date(2026, 9, 13, 12).getTime();
+  const historyUsage = { ...usage, usageHistory: {
+    updatedAt: historyNow,
+    tokenBuckets: [{ start: historyNow - 3600000, totalTokens: 12000000 }],
+    quotaSamples: [{ at: historyNow - 300000, secondaryRemaining: 42, secondaryResetsAt: 123 }],
+  } };
+  const historyOriginalNow = window.Date.now;
+  const historyOriginalWidth = window.innerWidth;
+  window.Date.now = () => historyNow;
+  try {
+    window.__CODEX_USAGE_MONITOR__ = historyUsage;
+    assert.equal(window.eval(payload).installed, true);
+    host = window.document.getElementById("codex-usage-monitor");
+    const monitor = window.__CODEX_USAGE_MONITOR_STATE__;
+    const shadow = host.shadowRoot;
+    shadow.querySelector('.usage-popover').getBoundingClientRect = () => {
+      const width = host.dataset.historyOpen === 'true' ? 450 : 1060;
+      return { x: 0, y: 0, width, height: 300, right: width, bottom: 300 };
+    };
+    shadow.querySelector('.usage-summary').click();
+    monitor.ensure();
+    const originalEntry = shadow.querySelector('[data-history-open]');
+    originalEntry.click();
+    assert.equal(host.style.getPropertyValue('--usage-popover-width'), '450px', 'history must use its own rendered width');
+    for (const viewport of [1024, 480]) {
+      window.innerWidth = viewport;
+      monitor.ensure();
+      const left = Number.parseFloat(host.style.getPropertyValue('--usage-left')) + Number.parseFloat(host.style.getPropertyValue('--usage-popover-shift'));
+      assert.ok(left >= 12 && left + 450 <= viewport - 12, 'history chart stays inside both window edges');
+    }
+    window.innerWidth = historyOriginalWidth;
+    const originalBack = shadow.querySelector('[data-history-close]');
+    monitor.updateUsage(historyUsage);
+    assert.equal(shadow.querySelector('[data-history-close]'), originalBack, 'unchanged history should retain its chart DOM');
+    assert.equal(originalEntry.isConnected, false, 'ordinary refresh replaces the column entry button');
+    originalBack.click();
+    assert.equal(shadow.activeElement, shadow.querySelector('[data-history-open]'), 'Back focuses the live entry button after refresh');
+    assert.equal(host.style.getPropertyValue('--usage-popover-width'), '1060px', 'returning restores the column placement');
+
+    shadow.querySelector('[data-history-open]').click();
+    let revision = historyNow;
+    for (const selector of ['[data-history-close]', '.usage-history-bar', '.usage-history-dot']) {
+      shadow.querySelector(selector).focus();
+      monitor.updateUsage({ ...historyUsage, usageHistory: { ...historyUsage.usageHistory, updatedAt: ++revision } });
+      assert.equal(shadow.activeElement, shadow.querySelector(selector), 'live history refresh preserves keyboard focus');
+    }
+  } finally {
+    window.__CODEX_USAGE_MONITOR_STATE__?.cleanup();
+    window.Date.now = historyOriginalNow;
+    window.innerWidth = historyOriginalWidth;
+  }
+} finally {
+  dom.window.close();
+}
+
+// Exercise settings through real controls with unavailable browser storage, then
+// restore the backend's saved payload into a genuinely new renderer window.
+const storageSeed = {
+  schemaVersion: 1,
+  metrics: { session: ["autoResume"], official: ["secondaryRemaining", "primaryRemaining", "primaryReset"] },
+  metricOrder: ["official:secondaryRemaining", "official:primaryRemaining", "official:primaryReset", "session:autoResume"],
+  apiKeyMetricsVersion: 2, officialMetricsVersion: 2, unifiedMetricsVersion: 2,
+  minimalMode: true, countdownVisualization: true, refreshEvery30Seconds: true,
+  englishUi: false, updateNotifications: true, showApiColumns: false, showResetForecast: false,
+  dailyKeepAlive: false, dailyKeepAliveStart: "07:00", dailyKeepAliveModel: "gpt-6-luna",
+  autoResume: false, autoResumeSharedMessage: false, autoResumeMessage: "继续原任务",
+  autoResumeThreads: {
+    [currentThreadId]: { enabled: false, message: "继续 A" },
+    [otherThreadId]: { enabled: false, message: "继续 B" },
+  },
+};
+const storageTestUsage = { ...usage, dailyKeepAlive: { status: "idle", models: [
+  { id: "gpt-6-luna", label: "Luna" }, { id: "gpt-5.6-luna", label: "5.6 Luna" },
+] } };
+const settingsRenderer = (seed, fault) => {
+  const fresh = new JSDOM(`<!doctype html><div id="composer-wrapper">${composerMarkup()}</div>`, {
+    pretendToBeVisual: true, runScripts: "outside-only", url: "https://codex.local/",
+  });
+  const renderer = fresh.window;
+  renderer.Element.prototype.getBoundingClientRect = window.Element.prototype.getBoundingClientRect;
+  // A stale/default cache must never beat a seed read from the monitor's file.
+  renderer.localStorage.setItem("codex-usage-monitor-settings-v2", JSON.stringify({ dailyKeepAlive: false, dailyKeepAliveStart: "07:00" }));
+  const calls = [];
+  let faultCount = 0;
+  if (fault === "quota") renderer.Storage.prototype.setItem = () => {
+    faultCount++;
+    throw new renderer.DOMException("Cache full", "QuotaExceededError");
+  };
+  if (fault === "getter") Object.defineProperty(renderer, "localStorage", { configurable: true, get() {
+    faultCount++;
+    throw new renderer.DOMException("Storage blocked", "SecurityError");
+  } });
+  if (fault === "remove") renderer.Storage.prototype.removeItem = () => {
+    faultCount++;
+    throw new renderer.DOMException("Removal blocked", "SecurityError");
+  };
+  renderer.__CODEX_USAGE_MONITOR_PERSISTED_SETTINGS__ = structuredClone(seed);
+  renderer.__CODEX_USAGE_MONITOR__ = structuredClone(storageTestUsage);
+  renderer.__codexUsageMonitorSaveSettings = (value) => calls.push(JSON.parse(value));
+  return { fresh, renderer, calls, faultCount: () => faultCount };
+};
+
+for (const fault of ["quota", "getter", "remove"]) {
+  const first = settingsRenderer(storageSeed, fault);
+  let saved;
+  try {
+    const { renderer, calls } = first;
+    assert.equal(renderer.eval(payload).installed, true);
+    const host = renderer.document.getElementById("codex-usage-monitor");
+    const change = (selector, value, verify) => {
+      const count = calls.length;
+      const control = host.shadowRoot.querySelector(selector);
+      assert.ok(control, `${fault}: control ${selector} exists`);
+      if (control.type === "checkbox") control.click();
+      else {
+        control.value = value;
+        control.dispatchEvent(new renderer.Event("change", { bubbles: true }));
+      }
+      assert.ok(calls.length > count, `${fault}: ${selector} reaches backend despite cache failure`);
+      verify?.(calls.at(-1));
+    };
+    change('input[data-source="official"][data-metric="secondaryRemaining"]');
+    change('input[data-source="official"][data-metric="secondaryRemaining"]', null, (settings) => {
+      assert.deepEqual(settings.metricOrder, ["official:primaryRemaining", "official:primaryReset", "session:autoResume", "official:secondaryRemaining"]);
+    });
+    change('[data-setting="dailyKeepAlive"]', null, (settings) => assert.equal(settings.dailyKeepAlive, true));
+    change('[data-setting-text="dailyKeepAliveStart"]', "05:35", (settings) => assert.equal(settings.dailyKeepAliveStart, "05:35"));
+    change('[data-setting-select="dailyKeepAliveModel"]', "gpt-5.6-luna", (settings) => assert.equal(settings.dailyKeepAliveModel, "gpt-5.6-luna"));
+    change('[data-setting="autoResume"]', null, (settings) => assert.equal(settings.autoResumeThreads[currentThreadId].enabled, true));
+    change('[data-setting-text="autoResumeMessage"]', "核对进度后继续 A");
+    renderer.__CODEX_USAGE_MONITOR_STATE__.updateUsage({ ...storageTestUsage, currentThreadId: otherThreadId });
+    change('[data-setting="autoResume"]');
+    change('[data-setting-text="autoResumeMessage"]', "核对进度后继续 B");
+    saved = calls.at(-1);
+    assert.deepEqual(saved.autoResumeThreads, {
+      [currentThreadId]: { enabled: true, message: "核对进度后继续 A" },
+      [otherThreadId]: { enabled: true, message: "核对进度后继续 B" },
+    });
+    assert.ok(first.faultCount() > 0, `${fault}: storage failure was exercised`);
+  } finally {
+    first.renderer.__CODEX_USAGE_MONITOR_STATE__?.cleanup();
+    first.fresh.window.close();
+  }
+  const restarted = settingsRenderer(saved, "getter");
+  try {
+    const { renderer } = restarted;
+    assert.equal(renderer.eval(payload).installed, true);
+    const monitor = renderer.__CODEX_USAGE_MONITOR_STATE__;
+    assert.deepEqual(JSON.parse(JSON.stringify(monitor.getSettings())), saved, `${fault}: new renderer restores complete backend state without browser storage`);
+    const shadow = renderer.document.getElementById("codex-usage-monitor").shadowRoot;
+    assert.deepEqual([...shadow.querySelectorAll(".usage-summary-item")].map((item) => `${item.dataset.source}:${item.dataset.metric}`), saved.metricOrder);
+    assert.equal(shadow.querySelector('[data-setting="dailyKeepAlive"]').checked, true);
+    assert.equal(shadow.querySelector('[data-setting-text="dailyKeepAliveStart"]').value, "05:35");
+    assert.equal(shadow.querySelector('[data-setting-select="dailyKeepAliveModel"]').value, "gpt-5.6-luna");
+    assert.equal(shadow.querySelector('[data-setting="autoResume"]').checked, true);
+    assert.equal(shadow.querySelector('[data-setting-text="autoResumeMessage"]').value, "核对进度后继续 A");
+    monitor.updateUsage({ ...storageTestUsage, currentThreadId: otherThreadId });
+    assert.equal(shadow.querySelector('[data-setting="autoResume"]').checked, true);
+    assert.equal(shadow.querySelector('[data-setting-text="autoResumeMessage"]').value, "核对进度后继续 B");
+  } finally {
+    restarted.renderer.__CODEX_USAGE_MONITOR_STATE__?.cleanup();
+    restarted.fresh.window.close();
+  }
+}
+
+// An inaccessible current cache must not suppress an independently valid legacy
+// cache when there is no backend seed (first migration from older versions).
+const legacyFallback = settingsRenderer(storageSeed);
+try {
+  const { renderer } = legacyFallback;
+  delete renderer.__CODEX_USAGE_MONITOR_PERSISTED_SETTINGS__;
+  renderer.localStorage.setItem("codex-usage-monitor-settings-v1", JSON.stringify(storageSeed));
+  const readCache = renderer.Storage.prototype.getItem;
+  renderer.Storage.prototype.getItem = function getItem(key) {
+    if (key === "codex-usage-monitor-settings-v2") throw new renderer.DOMException("Current cache unavailable", "SecurityError");
+    return readCache.call(this, key);
+  };
+  assert.equal(renderer.eval(payload).installed, true);
+  assert.equal(renderer.__CODEX_USAGE_MONITOR_STATE__.getSettings().dailyKeepAliveStart, storageSeed.dailyKeepAliveStart);
+  assert.deepEqual(JSON.parse(JSON.stringify(renderer.__CODEX_USAGE_MONITOR_STATE__.getSettings().metricOrder)), storageSeed.metricOrder);
+} finally {
+  legacyFallback.renderer.__CODEX_USAGE_MONITOR_STATE__?.cleanup();
+  legacyFallback.fresh.window.close();
+}
+
+const diagnosticRenderer = settingsRenderer(storageSeed);
+try {
+  const { renderer } = diagnosticRenderer;
+  const requests = [];
+  renderer.__codexUsageMonitorRunDiagnostics = value => requests.push(value);
+  renderer.eval(payload);
+  const monitor = renderer.__CODEX_USAGE_MONITOR_STATE__;
+  monitor.updateUsage({ ...storageTestUsage, compatibility: { status: "attention", checkedAt: Date.now(), desktopVersion: "26.1021.3705.0", changed: true,
+    checks: [{id:"resume-channel",status:"failed",detail:"readonly-channel"},{id:"resume-execution",status:"unverified",detail:"actual-pending"}] } });
+  const shadow = renderer.document.getElementById("codex-usage-monitor").shadowRoot;
+  assert.equal(shadow.querySelector(".usage-compatibility-warning").hidden, false);
+  shadow.querySelector("[data-compatibility-open]").click();
+  assert.equal(shadow.querySelector(".usage-compatibility-body").hidden, false);
+  assert.equal(shadow.querySelector('[data-check="resume-channel"]').dataset.status, "failed");
+  assert.equal(shadow.querySelector('[data-check="resume-execution"]').dataset.status, "unverified");
+  assert.match(shadow.querySelector('[data-check="resume-execution"]').textContent, /待验证|Unverified/);
+  shadow.querySelector("[data-run-diagnostics]").click();
+  assert.deepEqual(requests, ["run"]);
+  monitor.updateUsage({ ...storageTestUsage, compatibility: {status:"ready",checkedAt:Date.now(),checks:[{id:"resume-channel",status:"unverified",detail:"thread-timeout"}]} });
+  assert.match(shadow.querySelector('[data-check="resume-channel"]').textContent,/等待重试|Retry pending/);
+  assert.equal(shadow.querySelector(".usage-compatibility-warning").hidden,true);
+  monitor.updateUsage({ ...storageTestUsage, compatibility: {status:"ready",checkedAt:Date.now(),checks:[]} });
+  assert.equal(shadow.querySelector(".usage-compatibility-warning").hidden, true);
+} finally { diagnosticRenderer.renderer.__CODEX_USAGE_MONITOR_STATE__?.cleanup(); diagnosticRenderer.fresh.window.close(); }
+
+console.log("PASS: unified panel, diagnostics warnings/manual check, durable settings despite storage errors, new-renderer restoration, replacement recovery, and cleanup lifecycle.");

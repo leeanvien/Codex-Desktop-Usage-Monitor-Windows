@@ -1,0 +1,4 @@
+{
+  "schemaVersion": 1,
+  "capabilities": ["daily-keep-alive-model-selection-v1", "post-update-compatibility-check-v1"]
+}

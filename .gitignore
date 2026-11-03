@@ -1,0 +1,17 @@
+dist/
+node_modules/
+.package-smoke/
+artifacts/
+.idea/
+.vs/
+.vscode/
+Thumbs.db
+.DS_Store
+output/
+# Versioned local installations are built output, not repository source.
+[0-9]*.[0-9]*.[0-9]*/
+*.log
+.env
+.env.*
+config/providers/*.local.json
+config/providers/*.secret.json
