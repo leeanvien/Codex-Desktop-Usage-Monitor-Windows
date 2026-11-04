@@ -410,6 +410,8 @@ node .\scripts\validate-provider.mjs .\config\providers\custom.example.json
 
 ## 9. 项目来源与贡献者
 
+本社区增强版直接基于 [JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows) 修改，感谢原项目提供用量监视与额度恢复续跑等基础功能。
+
 项目从 [Fei-Away/Codex-Dream-Skin](https://github.com/Fei-Away/Codex-Dream-Skin) 的运行时注入思路演化而来，当前发布版只保留用量监视功能。代码采用 MIT License，详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。
 
 - [+羊（@JiaYang-BUAA）](https://github.com/JiaYang-BUAA)：项目发起、产品设计与维护。
