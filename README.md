@@ -5,7 +5,7 @@
 [![Windows CI](https://github.com/leeanvien/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml/badge.svg)](https://github.com/leeanvien/Codex-Desktop-Usage-Monitor-Windows/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/leeanvien/Codex-Desktop-Usage-Monitor-Windows)](https://github.com/leeanvien/Codex-Desktop-Usage-Monitor-Windows/releases/latest)
 
-本仓库为 [上游项目](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows) 的社区修改版，加入每日定时保活、功能自检和相关兼容性修复；保留原 MIT 许可证与来源声明。
+本仓库是 [@leeanvien](https://github.com/leeanvien) 基于 [上游项目](https://github.com/JiaYang-BUAA/Codex-Desktop-Usage-Monitor-Windows) 维护的社区增强版，新增 **每日定时保活**、**功能自检** 和相关兼容性修复；保留原 MIT 许可证与来源声明。
 
 Codex Usage Monitor 把官方订阅周期、当前会话 Token、社区重置概率、Tibo 最新 X 动态，以及可选的 API 账户和 API Key 用量，直接放到 Windows 版 Codex Desktop 的输入区域旁。
 
@@ -13,9 +13,9 @@ Codex Usage Monitor 把官方订阅周期、当前会话 Token、社区重置概
 
 > 本项目是非官方项目，与 OpenAI 没有隶属、赞助或背书关系。社区重置概率和 Tibo 动态也不是 OpenAI 官方数据。Codex 更新可能改变页面结构；项目会持续通过兼容性测试适配新版界面。
 
-![Codex Usage Monitor 本机展开面板实拍：统一续跑发送内容与重置预告方式](docs/images/monitor-expanded.png)
+![v3.2.13 展开面板：每日定时保活、模型选择和功能自检](docs/images/monitor-expanded.png)
 
-上图为本机实际截图，展示值和开关状态仅代表截图时的配置，不是新安装默认值。
+配图由当前 **v3.2.13 界面代码**独立渲染，均为示例数据。上图已开启定时保活、展开功能自检并完整展示滚动区域，预测/API 栏已隐藏；开关状态并非默认设置，实际执行项仍显示“待验证”。
 
 主要功能：
 
@@ -76,13 +76,13 @@ ChatGPT 普通聊天模式不挂载监视栏；ChatGPT Work 工作模式和 Code
 
 识别为 Pro 账户时，保留“5小时剩余”及勾选框，数值显示为 `--`，折叠栏也不显示百分数；“重置时间”使用主额度的 7 天窗口。Spark 等模型独立额度不会混入官方订阅展示；其他套餐保留原有 5 小时显示。
 
-![Codex Usage Monitor 普通模式示意图](docs/images/monitor-collapsed.png)
+![v3.2.13 普通模式界面演示：官方额度、重置时间与续跑开关](docs/images/monitor-collapsed.png)
 
 ### 2.2 极简模式
 
 极简模式隐藏指标名称，只保留数值、单位和必要开关，最多选择 14 项；选中 9 项及以上时自动使用双行布局。
 
-![Codex Usage Monitor 极简模式示意图](docs/images/monitor-minimal.png)
+![v3.2.13 极简模式界面演示：额度、会话 Token 与续跑开关](docs/images/monitor-minimal.png)
 
 ### 2.3 展开面板
 
@@ -259,7 +259,7 @@ https://codex.gussuriworks.com/api/current?locale=zh
 - 认证头和响应字段映射位于“高级设置（通常无需修改）”。
 - 密钥框不会回填；已经配置时留空可保留原密钥。
 
-![API Key 小白配置界面](docs/images/configure-api-key.png)
+![v3.2.13 API Key 配置字段示例，未填写密钥](docs/images/configure-api-key.png)
 
 如果服务商返回 `HTTP 429`，界面会显示“请求受限”，并保留旧数据。这不一定表示 Key 失效；监视器会按 60、120、240、300 秒逐步退避，成功后恢复为 60 秒刷新。
 
@@ -274,6 +274,14 @@ https://codex.gussuriworks.com/api/current?locale=zh
 3. 校验通过后安装并热替换监视器后台。
 
 更新不会重启 Codex。检查、下载或校验失败时继续使用当前版本，并在下个周期重试。
+
+**更新后如果“功能自检”存在异常，请自行让 AI（例如 Codex）协助排查和修复。** 将自检异常项及当前 Codex 版本附在下面这段话后发送给 AI：
+
+```text
+请检查并修复 Codex Usage Monitor 的功能自检异常。
+先阅读项目根目录的 AGENTS.md 和 README.md，根据自检结果和当前 Codex 版本定位原因。
+保留现有定时保活、额度恢复续跑和用户设置，修复后完成必要测试。
+```
 
 ### 4.2 安装位置与运行包
 
@@ -406,3 +414,4 @@ node .\scripts\validate-provider.mjs .\config\providers\custom.example.json
 
 - [+羊（@JiaYang-BUAA）](https://github.com/JiaYang-BUAA)：项目发起、产品设计与维护。
 - [Codex（@codex）](https://github.com/codex)：协作完成界面设计、功能实现、问题诊断、测试与文档。
+- [leeanvien（@leeanvien）](https://github.com/leeanvien)：维护此社区增强版，在上游基础上新增 **每日定时保活**（时间与模型选择、复用专用对话）和 **功能自检**（Codex 更新后的兼容性检查）。
